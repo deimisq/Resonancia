@@ -1,0 +1,209 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public-safe user profile and synthesis preferences isolated per authenticated user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID matching the document ID."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "User display name from Google Sign-In."
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Optional profile avatar URL."
+        },
+        "preferredVoice": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Default studio voice profile (prebuilt name, 'custom', or stored voice_ ID)."
+        },
+        "preferredCustomVoiceId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]*$",
+          "description": "Optional identifier of the active local or synced custom replicated voice."
+        },
+        "preferredEmotionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Default emotional register preset ID."
+        },
+        "preferredStyle": {
+          "type": "string",
+          "maxLength": 1200,
+          "description": "Default custom acting/vocal style prompt."
+        },
+        "preferredIntensity": {
+          "type": "string",
+          "enum": ["subtle", "balanced", "intense"],
+          "description": "Default emotional intensity level."
+        },
+        "preferredPace": {
+          "type": "string",
+          "enum": ["slow", "natural", "dynamic"],
+          "description": "Default vocal pace/cadence."
+        },
+        "preferredEngine": {
+          "type": "string",
+          "enum": [
+            "gemini-3.8-flash-tts",
+            "gemini-3.8-flash-lite-tts",
+            "opensource-hf",
+            "opensource-endpoint"
+          ],
+          "description": "Default TTS engine."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last update timestamp."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "preferredVoice",
+        "preferredEmotionId",
+        "preferredStyle",
+        "preferredIntensity",
+        "preferredPace",
+        "preferredEngine",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated private metadata for the user (email PII and BYOK configuration status, never raw API keys).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "hasConfiguredApiKey": {
+          "type": "boolean",
+          "description": "Indicates whether the user has configured their personal Gemini API key in their browser session."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "hasConfiguredApiKey", "updatedAt"]
+    },
+    "AudioScriptTake": {
+      "title": "AudioScriptTake",
+      "description": "Saved voice synthesis script, emotional configuration, and metadata owned by a single user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["single", "dialogue"]
+        },
+        "voiceSummary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "emotionLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "styleUsed": {
+          "type": "string",
+          "maxLength": 1200
+        },
+        "scriptText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 15000
+        },
+        "durationSeconds": {
+          "type": "number"
+        },
+        "modelUsed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "favorite": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "title",
+        "mode",
+        "voiceSummary",
+        "emotionLabel",
+        "styleUsed",
+        "scriptText",
+        "durationSeconds",
+        "modelUsed",
+        "favorite",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User studio profile and voice preferences."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Isolated private user PII document (docId = 'info')."
+    },
+    "/users/{userId}/takes/{takeId}": {
+      "schema": { "$ref": "#/entities/AudioScriptTake" },
+      "description": "User-isolated voice scripts and emotional take metadata."
+    }
+  }
+}
