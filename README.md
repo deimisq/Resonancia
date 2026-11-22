@@ -1,3 +1,5 @@
+<p align="center"><img src="public/logo.svg" width="96" alt="Resonancia"></p>
+
 # Resonancia — Estudio de Síntesis de Voz Emotiva con IA
 
 Aplicación web **full-stack** (React 19 + TypeScript + Express + Firebase Auth/Firestore + Gemini TTS) diseñada para crear locuciones expresivas, diálogos con múltiples voces y lotes de frases descargables en formato ZIP, preparada para despliegue público multiusuario con aislamiento por cuenta y arquitectura **BYOK (Bring Your Own Key)**.

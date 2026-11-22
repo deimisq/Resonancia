@@ -13,6 +13,7 @@ import {
   Volume2,
 } from "lucide-react";
 import { onAuthStateChanged, User } from "firebase/auth";
+import { Logo } from "./components/Logo";
 import {
   ActiveTab,
   AudioTake,
@@ -1670,8 +1671,9 @@ export default function App() {
               e.preventDefault();
               setActiveTab("studio");
             }}
-            className="text-xl font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 font-display"
+            className="flex items-center gap-2.5 text-xl font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 font-display"
           >
+            <Logo className="w-8 h-8" />
             Resonancia
           </a>
 
@@ -1893,6 +1895,7 @@ export default function App() {
         ) : !user && activeTab !== "guide" ? (
           <section className="max-w-2xl mx-auto my-8 sm:my-12 bg-white border border-slate-200 rounded-xl p-8 sm:p-10 space-y-7">
             <div className="space-y-2.5">
+              <Logo className="w-14 h-14 mb-2" />
               <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">
                 Estudio multiusuario con aislamiento privado
               </p>
