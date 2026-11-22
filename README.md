@@ -1,109 +1,139 @@
 <p align="center"><img src="public/logo.svg" width="96" alt="Resonancia"></p>
 
-# Resonancia — Estudio de Síntesis de Voz Emotiva con IA
+<h1 align="center">Resonancia</h1>
 
-Aplicación web **full-stack** (React 19 + TypeScript + Express + Firebase Auth/Firestore + Gemini TTS) diseñada para crear locuciones expresivas, diálogos con múltiples voces y lotes de frases descargables en formato ZIP, preparada para despliegue público multiusuario con aislamiento por cuenta y arquitectura **BYOK (Bring Your Own Key)**.
+<p align="center">
+  Estudio web de síntesis de voz emotiva con IA: locuciones expresivas, diálogos multi-personaje y lotes de frases descargables.
+</p>
 
----
-
-## Características principales
-
-- **Estudio de locución expresiva**: 5 perfiles de voz (`Kore`, `Zephyr`, `Puck`, `Charon`, `Fenrir`), 8 registros emocionales, control de intensidad y cadencia, marcadores respiratorios (`<breath>`, `<laugh>`, `<gasp>`) y mejora prosódica asistida (`POST /api/tts/enhance`).
-- **Clonación de voz propia gratuita (Motores Open-Source sin hardware propio)**: Graba una muestra corta o sube un audio local (`WAV 24 kHz mono`) para generar audios con tu voz sin costo de Gemini Tier 1 usando **Hugging Face Spaces (ZeroGPU)** (Chatterbox Multilingual, F5-TTS) o tu propio servidor **Google Colab T4 / Endpoint HTTPS** (Gradio o REST). Incluye modal de configuración con script Python copiable y prueba de conexión (`POST /api/opensource/test`).
-- **Clonación de voz propia (Gemini Voices API)**: Graba desde tu micrófono la frase de consentimiento obligatorio y un texto propuesto por la app; el navegador convierte automáticamente el audio a **WAV 24 kHz mono 16-bit** para crear tu modelo vocal (`voice_...` en tu proyecto Gemini o `voicekey_...` local temporal de 7 días). *(Nota: Google exige una clave Gemini API en Nivel de Pago Tier 1+ para replicación vocal).*
-- **Persistencia completa de parámetros**: Tu voz activa, emoción, dirección actoral, intensidad, cadencia y motor se guardan automáticamente como valores predeterminados entre sesiones.
-- **Diálogos multi-personaje**: Hasta 8 locutores configurables con dirección emocional independiente y síntesis dual nativa o agrupada automáticamente en fragmentos WAV concatenados.
-- **Lotes por frases y exportación ZIP**: Detección automática por numeración o segmentación con IA (`POST /api/tts/split-phrases`), recuperación automática ante límites de cuota (`429`) y descarga empaquetada de pistas `.wav`/`.mp3` numeradas con `jszip`.
-- **Reproductor maestro con forma de onda**: Visualización interactiva en `<canvas>`, controles de velocidad (`0.85x`–`1.3x`) y descarga del audio generado.
-- **Acceso con Google + aislamiento por usuario**: Autenticación con Firebase (`GoogleAuthProvider`), verificación de correo electrónico en backend y sincronización de preferencias e historial de guiones en Cloud Firestore + caché local IndexedDB aislada por `ownerId`.
-- **Claves y tokens de sesión (BYOK / Open-Source)**: Cada usuario ingresa su propia clave de Google AI Studio (`POST /api/keys/validate`) o sus tokens opcionales de Hugging Face (`hf_...`) / Endpoint Bearer. Las credenciales **no se almacenan en Firestore ni en servidores**; permanecen únicamente en `sessionStorage` asociado al `uid` activo y se envían por HTTPS (`X-Gemini-Key`, `X-HF-Token`, `X-OpenSource-Token`).
+<p align="center">
+  <a href="LICENSE"><img alt="Licencia MIT" src="https://img.shields.io/badge/licencia-MIT-blue.svg"></a>
+  <img alt="Node 22+" src="https://img.shields.io/badge/node-22%2B-339933.svg">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.4.0-4f46e5.svg">
+</p>
 
 ---
 
-## Arquitectura y seguridad
+## ¿Qué es?
+
+Resonancia es una aplicación **full-stack** (React 19 + TypeScript + Express + Firebase + Gemini TTS) pensada para publicarse en internet con **cuentas separadas por usuario** y arquitectura **BYOK** (*Bring Your Own Key*): cada persona entra con Google y usa **su propia clave de Gemini**, de modo que el servidor no asume costes ni guarda credenciales.
+
+## Características
+
+- **Locución expresiva**: 5 voces (`Kore`, `Zephyr`, `Puck`, `Charon`, `Fenrir`), 8 registros emocionales, intensidad y cadencia, marcadores `<breath>`, `<laugh>`, `<gasp>` y mejora prosódica asistida por IA.
+- **Diálogos**: hasta 8 personajes con dirección emocional independiente; el servidor agrupa y concatena los fragmentos en un único WAV.
+- **Lotes por frases**: detección por numeración o con IA, reintentos ante límites de cuota y descarga en **ZIP** (`.wav`/`.mp3`).
+- **Clonación de voz**
+  - *Gratuita*: motores **Open-Source** vía Hugging Face Spaces (Chatterbox, F5-TTS) o tu propio endpoint (Google Colab / Gradio / REST) con una muestra de tu voz.
+  - *Gemini Voices API*: con frase de consentimiento grabada (requiere clave Gemini de pago, Tier 1+).
+- **Reproductor con forma de onda**, velocidad ajustable y descarga.
+- **Biblioteca personal** (Firestore + caché local IndexedDB) y preferencias persistentes entre sesiones.
+
+## Inicio rápido (local)
+
+Requisitos: **Node.js 22+**, un proyecto de Firebase (ver abajo) y una [clave de Google AI Studio](https://aistudio.google.com/apikey).
+
+```bash
+git clone https://github.com/deimisq/Resonancia.git
+cd Resonancia
+npm install
+cp .env.example .env     # en PowerShell: Copy-Item .env.example .env
+npm run dev              # http://localhost:3000
+```
+
+Otros comandos: `npm run lint` (tipos), `npm test` (tests del servidor), `npm run build`, `npm start` (producción).
+
+## Configurar Firebase
+
+Este repo trae la configuración **pública** del proyecto de su autor en `firebase-applet-config.json`. Si haces un fork o tu propia instancia, crea el tuyo:
+
+1. En la [consola de Firebase](https://console.firebase.google.com) crea un proyecto y registra una **app web** (`</>`); copia el bloque `firebaseConfig`.
+2. **Authentication → Sign-in method**: habilita **Google**. En **Settings → Authorized domains** añade tu dominio público.
+3. **Firestore Database**: crea la base `(default)` en modo producción.
+4. **Reglas**: pega el contenido de [`firestore.rules`](firestore.rules) en la pestaña *Reglas* y publica.
+5. **Índice compuesto**: en *Índices → Compuestos* crea `takes` · ámbito *Colección* · `ownerId` ascendente + `createdAt` descendente (equivale a [`firestore.indexes.json`](firestore.indexes.json)). Sin él, la biblioteca falla.
+6. Pon tus valores en `firebase-applet-config.json` (o en las variables `VITE_FIREBASE_*` y `FIREBASE_PROJECT_ID`, que tienen prioridad).
+
+> Las claves web de Firebase son públicas por diseño; la protección real son las reglas de Firestore y los dominios autorizados.
+
+## Variables de entorno
+
+| Variable | Por defecto | Para qué sirve |
+|---|---|---|
+| `PORT` | `3000` | Puerto del servidor |
+| `HOST` | `0.0.0.0` | Interfaz de escucha (`127.0.0.1` si hay túnel/proxy local) |
+| `FIREBASE_PROJECT_ID` | del `firebase-applet-config.json` | Proyecto con el que se verifican los tokens |
+| `ALLOW_SERVER_FALLBACK_KEY` | `false` | Permite usar `GEMINI_API_KEY` del servidor si el usuario no trae la suya. **Déjalo en `false` en público** |
+| `GEMINI_API_KEY` | — | Solo si el anterior es `true` |
+| `GEMINI_TTS_MODEL`, `GEMINI_TTS_LITE_MODEL`, `GEMINI_TEXT_MODEL` | ver `server.ts` | Sobrescribe los modelos de Gemini si Google los renombra |
+| `VITE_FIREBASE_*` | — | Sobrescriben la config web de Firebase (ver `.env.example`) |
+
+## Despliegue en un servidor Linux (LXC / VM)
+
+Probado en **Ubuntu 24.04** (LXC de 1 GB de RAM). Como root dentro del servidor:
+
+```bash
+apt-get update && apt-get install -y curl
+curl -fsSL https://raw.githubusercontent.com/deimisq/Resonancia/main/deploy/install.sh | bash
+```
+
+[`deploy/install.sh`](deploy/install.sh) es idempotente: instala Node 22, crea el usuario `resonancia`, clona en `/opt/resonancia`, compila, crea `/etc/resonancia.env` (solo si no existe) y registra el servicio systemd [`resonancia`](deploy/resonancia.service). **Para actualizar, vuelve a ejecutarlo.**
+
+```bash
+systemctl status resonancia
+journalctl -u resonancia -f
+```
+
+El servicio escucha en `127.0.0.1:3000`. Para publicarlo, apunta un **túnel de Cloudflare** (o cualquier proxy inverso con HTTPS) a `http://localhost:3000` y añade el dominio en *Authorized domains* de Firebase.
+
+## Arquitectura
 
 ```
 Navegador (React + Vite)
-  ├── Firebase Auth (Google Sign-In con emailVerified requerido)
-  ├── Cloud Firestore (users/{uid}, users/{uid}/private/info, users/{uid}/takes/{takeId})
-  ├── IndexedDB aislado por ownerId (caché local de WAV y muestras Open-Source)
-  └── sessionStorage (`resonancia_byok_${uid}`, `resonancia_hf_${uid}`, `resonancia_os_tok_${uid}`)
-          │
-          │  X-Firebase-Auth: <Firebase ID Token> (o Authorization: Bearer)
-          │  X-Gemini-Key / X-HF-Token / X-OpenSource-Token
-          ▼
-Servidor Express (server.ts, puerto 3000)
-  ├── Verificación criptográfica de ID Token (firebase-admin/auth)
-  ├── Rate limiter por usuario (45 req/min) + validación estricta de URLs públicas (HTTPS + DNS)
-  ├── Cabeceras HTTP de endurecimiento (nosniff, Referrer-Policy, Permissions-Policy)
-  └── Proxy hacia Gemini TTS (v1beta) y motores Open-Source (@gradio/client / REST HTTPS) sin registrar credenciales
+  ├── Firebase Auth (Google, correo verificado obligatorio)
+  ├── Cloud Firestore  users/{uid}, users/{uid}/private/info, users/{uid}/takes/{id}
+  ├── IndexedDB (caché de audio y muestras, aislada por usuario)
+  └── sessionStorage (claves BYOK: Gemini / HF / Bearer)
+        │  X-Firebase-Auth + X-Gemini-Key / X-HF-Token / X-OpenSource-Token
+        ▼
+Servidor Express (server.ts)
+  ├── Verifica el ID token (firebase-admin) y limita 45 req/min por usuario
+  ├── Proxy a Gemini TTS y a motores Open-Source (Gradio / REST)
+  └── Sirve el frontend compilado (dist/) en producción
 ```
 
-### Reglas de Firestore (`firestore.rules`)
-
-- Bloqueo global por defecto (`allow read, write: if false`).
-- Acceso estricto por propietario autenticado y correo verificado (`request.auth.uid == userId && request.auth.token.email_verified == true`).
-- Validación de esquema, tipos, longitudes máximas y sellos de tiempo inmutables (`createdAt == request.time`).
-- `users/{uid}/private/info` guarda únicamente un indicador booleano (`hasConfiguredApiKey`), **nunca** la clave real.
-
----
-
-## Puesta en marcha local
-
-### 1. Requisitos previos
-
-- Node.js 22+
-- Un proyecto en [Firebase Console](https://console.firebase.google.com/) con **Authentication (Google)** y **Cloud Firestore** habilitados.
-- Una clave personal de [Google AI Studio](https://aistudio.google.com/apikey) para probar la síntesis.
-
-### 2. Instalación
-
-```bash
-npm install
-cp .env.example .env
+```
+src/            Frontend (App.tsx, components/, lib/, types/)
+server.ts       API Express y rutas
+server/         Helpers del servidor: netSafety.ts (anti-SSRF), wav.ts, openSource.ts + tests
+deploy/         Instalador y unidad systemd
+public/         Logo, iconos, manifest e imagen para compartir
+firestore.rules Reglas de seguridad de Firestore
 ```
 
-Configura `.env` (o actualiza `firebase-applet-config.json` con tu propio proyecto Firebase si haces un fork):
+## Seguridad
 
-```env
-PORT=3000
-ALLOW_SERVER_FALLBACK_KEY=false
-FIREBASE_PROJECT_ID=tu-proyecto-firebase
-```
+- Las claves de los usuarios **no se guardan** en Firestore ni en el servidor; solo viajan por HTTPS en cabeceras.
+- Reglas de Firestore por propietario con correo verificado, validación de esquema y de tamaños ([`security_spec.md`](security_spec.md)).
+- Defensa contra **SSRF** en los endpoints externos: solo HTTPS, bloqueo de IPs privadas y comprobación de DNS en cada conexión, incluidas redirecciones.
+- Los cuerpos JSON se leen **después** de autenticar; cabecera CSP en modo `Report-Only` (actívala cuando verifiques tu dominio).
 
-### 3. Reglas de Firestore
+Para reportar vulnerabilidades, consulta [SECURITY.md](SECURITY.md).
 
-Valida y despliega las reglas incluidas antes de abrir el entorno público:
+## Licencia y avisos de terceros
 
-```bash
-npx eslint firestore.rules
-firebase deploy --only firestore:rules
-```
+El código de Resonancia se publica bajo licencia **[MIT](LICENSE)** © 2026 Deimis Quintanilla. Las dependencias npm de producción usan licencias permisivas (MIT, Apache-2.0, ISC, BSD, 0BSD); no hay componentes copyleft que afecten a la distribución.
 
-### 4. Ejecución en desarrollo y producción
+Servicios y modelos externos que **no** forman parte de este repositorio y tienen sus propias condiciones:
 
-```bash
-# Desarrollo (Express + Vite middleware en el puerto 3000)
-npm run dev
+- **Google Gemini / Firebase**: sujetos a sus términos de uso y a la política de uso aceptable de la IA generativa.
+- **Hugging Face Spaces** (Chatterbox, F5-TTS, etc.): cada Space y modelo tiene su propia licencia; algunos modelos (por ejemplo, pesos preentrenados de F5-TTS) pueden ser de **uso no comercial**. Revísalas antes de un uso comercial.
+- **Tipografías** (Outfit, Plus Jakarta Sans, JetBrains Mono): SIL Open Font License, cargadas desde Google Fonts.
 
-# Verificación de tipos, tests y compilación
-npm run lint
-npm test
-npm run build
+### Uso responsable de la clonación de voz
 
-# Producción
-NODE_ENV=production npm start   # en Windows PowerShell: $env:NODE_ENV='production'; npm start
+Clona **solo tu propia voz** o la de personas que hayan dado su consentimiento expreso. Suplantar la identidad de alguien o producir audio engañoso puede ser ilegal y va contra los términos de los proveedores. Quien opere una instancia es responsable del uso que se haga de ella.
 
-# Opcional: sobrescribir modelos si Google los renombra
-# GEMINI_TTS_MODEL, GEMINI_TTS_LITE_MODEL, GEMINI_TEXT_MODEL
-```
+## Contribuir y versiones
 
----
-
-## Publicación en GitHub
-
-Antes de hacer `git push`:
-
-1. Verifica que `.env` esté excluido (incluido en `.gitignore` mediante `.env*` y `!.env.example`).
-2. Mantén `ALLOW_SERVER_FALLBACK_KEY=false` en entornos públicos para evitar consumo accidental de una cuota centralizada.
-3. Si cambias de proyecto Firebase, reemplaza `firebase-applet-config.json` o define las variables `VITE_FIREBASE_*` y `FIREBASE_PROJECT_ID`.
+Lee [CONTRIBUTING.md](CONTRIBUTING.md). El historial de cambios está en [VERSIONING.md](VERSIONING.md).

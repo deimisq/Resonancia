@@ -1,7 +1,13 @@
 {
   "name": "resonancia-voz-ia",
   "private": true,
-  "version": "1.3.1",
+  "version": "1.4.0",
+  "license": "MIT",
+  "author": "Deimis Quintanilla",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deimisq/Resonancia.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
