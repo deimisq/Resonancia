@@ -1,7 +1,7 @@
 {
   "firestore": [
     {
-      "database": "ai-studio-resonanciasntesi-e1c6314a-b894-4197-8c1b-4380d148cc69",
+      "database": "(default)",
       "rules": "firestore.rules",
       "indexes": "firestore.indexes.json"
     }
