@@ -84,12 +84,16 @@ firebase deploy --only firestore:rules
 # Desarrollo (Express + Vite middleware en el puerto 3000)
 npm run dev
 
-# Verificación de tipos y compilación
+# Verificación de tipos, tests y compilación
 npm run lint
+npm test
 npm run build
 
 # Producción
-NODE_ENV=production npm start
+NODE_ENV=production npm start   # en Windows PowerShell: $env:NODE_ENV='production'; npm start
+
+# Opcional: sobrescribir modelos si Google los renombra
+# GEMINI_TTS_MODEL, GEMINI_TTS_LITE_MODEL, GEMINI_TEXT_MODEL
 ```
 
 ---
