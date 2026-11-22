@@ -1,5 +1,11 @@
 # Historial de Versiones — Resonancia
 
+## [1.5.0] - Sincronización entre dispositivos y apoyo al creador
+- **Audios en la nube**: cada toma generada se copia al servidor (`/api/takes/:id/audio`) y se recupera en otros dispositivos; cuota por usuario configurable.
+- **Ajustes de API persistentes**: claves de Gemini/Hugging Face/endpoint y configuración Open-Source se guardan cifradas (AES-256-GCM) y se restauran al iniciar sesión; casilla para no recordarlas.
+- **Apoyo**: botón *Apoyar* y pie de página con enlace a GitHub Sponsors, `.github/FUNDING.yml`.
+- README con la URL pública de la instancia.
+
 ## [1.4.0] - Endurecimiento, despliegue en Linux, logo y documentación
 - **Seguridad**: cuerpos JSON leídos tras autenticar, guard global anti-SSRF (DNS verificado en cada conexión, incluido `@gradio/client`), límite de cuota que cuenta los fragmentos de diálogo, CSP en modo `Report-Only`.
 - **Audio**: el PCM crudo de Gemini se envuelve en WAV; admite URLs firmadas largas de Hugging Face (límite 4096).

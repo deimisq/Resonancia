@@ -23,7 +23,8 @@ interface ApiKeyModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentApiKey: string;
-  onSaveApiKey: (key: string) => void;
+  syncSecrets: boolean;
+  onSaveApiKey: (key: string, remember: boolean) => void;
   onClearApiKey: () => void;
   getIdToken: () => Promise<string>;
 }
@@ -32,10 +33,12 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
   isOpen,
   onClose,
   currentApiKey,
+  syncSecrets,
   onSaveApiKey,
   onClearApiKey,
   getIdToken,
 }) => {
+  const [remember, setRemember] = useState(syncSecrets);
   const [draftKey, setDraftKey] = useState(currentApiKey);
   const [isValidating, setIsValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -86,7 +89,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
         throw new Error(data.error || "La clave no pudo ser validada con Gemini.");
       }
 
-      onSaveApiKey(cleaned);
+      onSaveApiKey(cleaned, remember);
       setValidationSuccess(true);
       setTimeout(() => {
         onClose();
@@ -199,6 +202,19 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
               <span>Clave verificada y activa para tu sesión.</span>
             </p>
           )}
+
+          <label className="flex items-start gap-2 text-xs text-slate-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              Recordar en todos mis dispositivos. Se guarda <strong>cifrada</strong> en el servidor
+              de Resonancia y se descarta al desmarcar esta opción.
+            </span>
+          </label>
 
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
             {currentApiKey ? (

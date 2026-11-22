@@ -7,6 +7,15 @@ import { App as FirebaseAdminApp, getApp, getApps, initializeApp } from "firebas
 import { getAuth } from "firebase-admin/auth";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import { Client, handle_file } from "@gradio/client";
+import fsp from "fs/promises";
+import {
+  decryptVault,
+  dirBytes,
+  encryptVault,
+  fileBytes,
+  isSafeId,
+  writeFileAtomic,
+} from "./server/userData.ts";
 import { assertSafePublicUrl, installOutboundGuard, safeFetchPublic } from "./server/netSafety.ts";
 import {
   GradioEndpointMeta,
@@ -32,6 +41,11 @@ const __dirname = path.dirname(__filename);
 const TTS_MODEL = process.env.GEMINI_TTS_MODEL || "gemini-3.8-flash-tts";
 const TTS_LITE_MODEL = process.env.GEMINI_TTS_LITE_MODEL || "gemini-3.8-flash-lite-tts";
 const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-4-hydrogen";
+
+// Per-user cloud storage (generated audio + encrypted API settings) lives on this server's disk.
+const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, "data");
+const VAULT_SECRET = process.env.VAULT_SECRET || "";
+const USER_QUOTA_BYTES = (Number(process.env.USER_QUOTA_MB) || 300) * 1024 * 1024;
 
 const PORT = Number(process.env.PORT) || 3000;
 // Behind a reverse proxy / tunnel set HOST=127.0.0.1 so only it can reach the app.
@@ -1393,6 +1407,113 @@ async function startServer() {
       }
     }
   );
+
+  // ---- Cross-device sync: audio takes and encrypted settings vault ----
+  const audioDir = (uid: string) => path.join(DATA_DIR, "audio", uid);
+  const takeFile = (uid: string, id: string) => path.join(audioDir(uid), `${id}.json`);
+  const vaultFile = (uid: string) => path.join(DATA_DIR, "vault", `${uid}.json`);
+  const isMissing = (e: unknown) => (e as NodeJS.ErrnoException)?.code === "ENOENT";
+
+  app.get("/api/takes/audio-ids", requireVerifiedAuth, userRateLimiter, async (req: AuthenticatedRequest, res) => {
+    const uid = req.authUser!.uid;
+    if (!isSafeId(uid)) return void res.status(400).json({ error: "Usuario inválido." });
+    const names = await fsp.readdir(audioDir(uid)).catch(() => [] as string[]);
+    res.json({ ids: names.filter((n) => n.endsWith(".json")).map((n) => n.slice(0, -5)) });
+  });
+
+  app.put(
+    "/api/takes/:id/audio",
+    requireVerifiedAuth,
+    userRateLimiter,
+    express.json({ limit: "25mb" }),
+    async (req: AuthenticatedRequest, res) => {
+      const uid = req.authUser!.uid;
+      const id = req.params.id;
+      const { audioBase64, mimeType, dialogueData } = (req.body || {}) as {
+        audioBase64?: unknown;
+        mimeType?: unknown;
+        dialogueData?: unknown;
+      };
+      if (!isSafeId(uid) || !isSafeId(id)) return void res.status(400).json({ error: "Identificador inválido." });
+      if (
+        typeof audioBase64 !== "string" ||
+        audioBase64.length < 100 ||
+        !/^[A-Za-z0-9+/=]+$/.test(audioBase64) ||
+        typeof mimeType !== "string" ||
+        !/^audio\/[\w.+-]{1,40}$/.test(mimeType)
+      ) {
+        return void res.status(400).json({ error: "Audio inválido." });
+      }
+      const dialogueJson = dialogueData === undefined ? undefined : JSON.stringify(dialogueData);
+      if (dialogueJson && dialogueJson.length > 200_000) {
+        return void res.status(400).json({ error: "Datos de diálogo demasiado grandes." });
+      }
+      const content = JSON.stringify({ audioBase64, mimeType, ...(dialogueJson ? { dialogueData } : {}) });
+      const file = takeFile(uid, id);
+      const used = (await dirBytes(audioDir(uid))) - (await fileBytes(file));
+      if (used + content.length > USER_QUOTA_BYTES) {
+        return void res.status(413).json({
+          error: `Superaste tu espacio en la nube (${Math.round(USER_QUOTA_BYTES / 1048576)} MB). Elimina tomas antiguas.`,
+        });
+      }
+      await writeFileAtomic(file, content);
+      res.json({ ok: true });
+    }
+  );
+
+  app.get("/api/takes/:id/audio", requireVerifiedAuth, userRateLimiter, async (req: AuthenticatedRequest, res) => {
+    const uid = req.authUser!.uid;
+    if (!isSafeId(uid) || !isSafeId(req.params.id)) return void res.status(400).json({ error: "Identificador inválido." });
+    try {
+      res.type("json").send(await fsp.readFile(takeFile(uid, req.params.id), "utf8"));
+    } catch (e) {
+      res.status(isMissing(e) ? 404 : 500).json({ error: "Audio no encontrado." });
+    }
+  });
+
+  app.delete("/api/takes/:id/audio", requireVerifiedAuth, userRateLimiter, async (req: AuthenticatedRequest, res) => {
+    const uid = req.authUser!.uid;
+    if (!isSafeId(uid) || !isSafeId(req.params.id)) return void res.status(400).json({ error: "Identificador inválido." });
+    await fsp.unlink(takeFile(uid, req.params.id)).catch((e) => {
+      if (!isMissing(e)) throw e;
+    });
+    res.json({ ok: true });
+  });
+
+  const requireVault = (res: Response): boolean => {
+    if (VAULT_SECRET) return true;
+    res.status(503).json({ error: "La sincronización de configuración no está habilitada en este servidor." });
+    return false;
+  };
+
+  app.get("/api/vault", requireVerifiedAuth, userRateLimiter, async (req: AuthenticatedRequest, res) => {
+    const uid = req.authUser!.uid;
+    if (!requireVault(res)) return;
+    try {
+      res.json({ data: decryptVault(VAULT_SECRET, uid, await fsp.readFile(vaultFile(uid), "utf8")) });
+    } catch {
+      // Missing file = nothing saved yet; a corrupt/foreign file is treated the same (never leak details).
+      res.json({ data: null });
+    }
+  });
+
+  app.put("/api/vault", requireVerifiedAuth, userRateLimiter, express.json({ limit: "64kb" }), async (req: AuthenticatedRequest, res) => {
+    const uid = req.authUser!.uid;
+    if (!requireVault(res)) return;
+    const data = (req.body as { data?: unknown } | undefined)?.data;
+    if (!data || typeof data !== "object" || Array.isArray(data) || JSON.stringify(data).length > 16_000) {
+      return void res.status(400).json({ error: "Configuración inválida." });
+    }
+    await writeFileAtomic(vaultFile(uid), encryptVault(VAULT_SECRET, uid, data));
+    res.json({ ok: true });
+  });
+
+  app.delete("/api/vault", requireVerifiedAuth, userRateLimiter, async (req: AuthenticatedRequest, res) => {
+    await fsp.unlink(vaultFile(req.authUser!.uid)).catch((e) => {
+      if (!isMissing(e)) throw e;
+    });
+    res.json({ ok: true });
+  });
 
   app.all("/api/*", (_req, res) => {
     res.status(404).json({ error: "Ruta de API no encontrada." });

@@ -14,7 +14,7 @@ ENVFILE=/etc/resonancia.env
 # 1. Paquetes y Node 22
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y --no-install-recommends curl ca-certificates git gnupg
+apt-get install -y --no-install-recommends curl ca-certificates git gnupg openssl
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
@@ -48,6 +48,12 @@ EOF
   chmod 640 "$ENVFILE"; chown root:resonancia "$ENVFILE"
   echo "Creado $ENVFILE (revísalo)."
 fi
+
+# 4b. Almacenamiento en la nube de usuarios (audios y ajustes cifrados). Idempotente.
+# IMPORTANTE: respalda VAULT_SECRET y /var/lib/resonancia; sin el secreto, los ajustes guardados no se pueden descifrar.
+grep -q '^VAULT_SECRET=' "$ENVFILE" || echo "VAULT_SECRET=$(openssl rand -hex 32)" >> "$ENVFILE"
+grep -q '^DATA_DIR=' "$ENVFILE" || echo "DATA_DIR=/var/lib/resonancia" >> "$ENVFILE"
+install -d -o resonancia -g resonancia -m 700 /var/lib/resonancia
 
 # 5. Servicio
 install -m 644 deploy/resonancia.service /etc/systemd/system/resonancia.service

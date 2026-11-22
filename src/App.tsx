@@ -2,6 +2,7 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "rea
 import {
   AlertCircle,
   Cpu,
+  Heart,
   KeyRound,
   Loader2,
   LogIn,
@@ -14,6 +15,19 @@ import {
 } from "lucide-react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { Logo } from "./components/Logo";
+import {
+  deleteTakeAudio,
+  downloadTakeAudio,
+  fetchVault,
+  listCloudAudioIds,
+  pushVault,
+  uploadTakeAudio,
+  VaultData,
+} from "./lib/cloudSync";
+
+const SPONSOR_URL = "https://github.com/sponsors/deimisq";
+const syncPrefKey = (uid: string) => `resonancia_sync_${uid}`;
+const isSyncOn = (uid: string) => localStorage.getItem(syncPrefKey(uid)) !== "0";
 import {
   ActiveTab,
   AudioTake,
@@ -436,12 +450,45 @@ export default function App() {
         return;
       }
 
-      const savedSessionKey =
+      let savedSessionKey =
         sessionStorage.getItem(getSessionKeyStorageId(nextUser.uid)) || "";
-      const savedHfToken =
+      let savedHfToken =
         sessionStorage.getItem(getSessionHfTokenStorageId(nextUser.uid)) || "";
-      const savedEndpointToken =
+      let savedEndpointToken =
         sessionStorage.getItem(getSessionEndpointTokenStorageId(nextUser.uid)) || "";
+
+      if (isSyncOn(nextUser.uid)) {
+        const vault = await fetchVault(nextUser);
+        if (cycleId !== activeAuthCycle) return;
+        if (vault) {
+          savedSessionKey = vault.geminiKey || savedSessionKey;
+          savedHfToken = vault.hfToken || savedHfToken;
+          savedEndpointToken = vault.endpointToken || savedEndpointToken;
+          if (savedSessionKey) sessionStorage.setItem(getSessionKeyStorageId(nextUser.uid), savedSessionKey);
+          if (savedHfToken) sessionStorage.setItem(getSessionHfTokenStorageId(nextUser.uid), savedHfToken);
+          if (savedEndpointToken) {
+            sessionStorage.setItem(getSessionEndpointTokenStorageId(nextUser.uid), savedEndpointToken);
+          }
+          if (vault.openSourceConfig) {
+            try {
+              localStorage.setItem(
+                getLocalOpenSourceConfigStorageId(nextUser.uid),
+                JSON.stringify(vault.openSourceConfig)
+              );
+            } catch {
+              // Ignore storage quota
+            }
+          }
+        }
+        else if (savedSessionKey || savedHfToken || savedEndpointToken) {
+          // First sync from a device that already has keys in this session.
+          pushVault(nextUser, {
+            geminiKey: savedSessionKey,
+            hfToken: savedHfToken,
+            endpointToken: savedEndpointToken,
+          }).catch(() => {});
+        }
+      }
       setUser(nextUser);
       setUserApiKey(savedSessionKey);
       setHfToken(savedHfToken);
@@ -594,6 +641,28 @@ export default function App() {
         );
         setLibraryTakes(merged);
         setCurrentTake(merged.find((t) => Boolean(t.audioBase64)) || merged[0] || null);
+
+        // Background sync (newest 30 each way): download audio made on other devices, upload ours.
+        void (async () => {
+          try {
+            const cloudIds = await listCloudAudioIds(nextUser);
+            for (const t of merged.filter((x) => !x.audioBase64 && cloudIds.has(x.id)).slice(0, 30)) {
+              if (cycleId !== activeAuthCycle) return;
+              const remote = await downloadTakeAudio(nextUser, t.id).catch(() => null);
+              if (!remote) continue;
+              const full: AudioTake = { ...t, ownerId: nextUser.uid, ...remote };
+              await saveAudioTake(full).catch(() => {});
+              setLibraryTakes((prev) => prev.map((x) => (x.id === t.id ? full : x)));
+              setCurrentTake((prev) => (prev && prev.id === t.id ? full : prev));
+            }
+            for (const t of merged.filter((x) => x.audioBase64 && !cloudIds.has(x.id)).slice(0, 30)) {
+              if (cycleId !== activeAuthCycle) return;
+              await uploadTakeAudio(nextUser, t).catch(() => {});
+            }
+          } catch {
+            // Cloud sync is best-effort; local data keeps working.
+          }
+        })();
       } catch (error) {
         if (cycleId !== activeAuthCycle) return;
         console.error("Error loading user workspace:", error);
@@ -703,13 +772,23 @@ export default function App() {
     await signOutUser();
   };
 
-  const handleSaveApiKey = (newKey: string) => {
+  const pushSecrets = (u: User, vault: VaultData) => {
+    if (isSyncOn(u.uid)) pushVault(u, vault).catch(console.error);
+  };
+
+  const handleSaveApiKey = (newKey: string, remember = true) => {
     if (!user) return;
     const cleaned = newKey.trim();
     sessionStorage.setItem(getSessionKeyStorageId(user.uid), cleaned);
     setUserApiKey(cleaned);
     auditionCacheRef.current = {};
     setErrorMessage(null);
+    localStorage.setItem(syncPrefKey(user.uid), remember ? "1" : "0");
+    if (remember) {
+      pushSecrets(user, { geminiKey: cleaned, hfToken, endpointToken, openSourceConfig });
+    } else {
+      pushVault(user, null).catch(console.error); // opted out: remove any stored copy
+    }
     updateApiKeyStatusFlag(user.uid, user.email || "", true).catch(console.error);
     void syncRemoteProjectVoices(user, cleaned);
   };
@@ -719,6 +798,7 @@ export default function App() {
     sessionStorage.removeItem(getSessionKeyStorageId(user.uid));
     setUserApiKey("");
     auditionCacheRef.current = {};
+    pushSecrets(user, { geminiKey: "", hfToken, endpointToken, openSourceConfig });
     updateApiKeyStatusFlag(user.uid, user.email || "", false).catch(console.error);
   };
 
@@ -752,6 +832,12 @@ export default function App() {
       sessionStorage.removeItem(getSessionEndpointTokenStorageId(user.uid));
     }
     setEndpointToken(nextEndpointToken);
+    pushSecrets(user, {
+      geminiKey: userApiKey,
+      hfToken: nextHfToken,
+      endpointToken: nextEndpointToken,
+      openSourceConfig: nextConfig,
+    });
 
     if (activateEngine) {
       setEngine(activateEngine);
@@ -1265,6 +1351,7 @@ export default function App() {
 
       await saveAudioTake(newTake);
       saveTakeMetadataToFirestore(user.uid, newTake).catch(console.error);
+      uploadTakeAudio(user, newTake).catch(console.error); // cross-device copy; local copy already saved
       setCurrentTake(newTake);
       setLibraryTakes((prev) => [newTake, ...prev]);
     } catch (error) {
@@ -1293,6 +1380,7 @@ export default function App() {
     if (!user) return;
     await deleteAudioTake(id, user.uid);
     deleteTakeFromFirestore(user.uid, id).catch(console.error);
+    deleteTakeAudio(user, id).catch(console.error);
     setLibraryTakes((prev) => prev.filter((t) => t.id !== id));
     if (currentTake?.id === id) {
       setCurrentTake(null);
@@ -1301,6 +1389,18 @@ export default function App() {
 
   const handleLoadInStudio = (take: AudioTake) => {
     setCurrentTake(take);
+    if (!take.audioBase64 && user) {
+      // Older take made on another device: pull its audio from the cloud copy.
+      void downloadTakeAudio(user, take.id)
+        .then(async (remote) => {
+          if (!remote) return;
+          const full: AudioTake = { ...take, ownerId: user.uid, ...remote };
+          await saveAudioTake(full).catch(() => {});
+          setLibraryTakes((prev) => prev.map((x) => (x.id === take.id ? full : x)));
+          setCurrentTake((prev) => (prev && prev.id === take.id ? full : prev));
+        })
+        .catch(() => {});
+    }
     setErrorMessage(null);
     if (take.mode === "dialogue" && take.dialogueData) {
       setDialogueSpeakers(take.dialogueData.speakers);
@@ -1710,7 +1810,17 @@ export default function App() {
           </nav>
 
           {/* Zone 3: Single Primary Action */}
-          <div className="shrink-0">
+          <div className="shrink-0 flex items-center gap-2">
+            <a
+              href={SPONSOR_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Apoyar el proyecto en GitHub Sponsors"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-pink-700 hover:bg-pink-50 border border-pink-200 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <Heart className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Apoyar</span>
+            </a>
             {!user ? (
               <button
                 type="button"
@@ -2234,6 +2344,21 @@ export default function App() {
         )}
       </main>
 
+      <footer className="border-t border-slate-200 bg-white">
+        <div className="max-w-[1360px] mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+          <span>Resonancia es gratuita y de código abierto (MIT).</span>
+          <a
+            href={SPONSOR_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 font-medium text-pink-700 hover:underline"
+          >
+            <Heart className="w-3.5 h-3.5" />
+            Si te sirve, apoya al creador
+          </a>
+        </div>
+      </footer>
+
       {user && (
         <Suspense fallback={null}>
           <ApiKeyModal
@@ -2241,6 +2366,7 @@ export default function App() {
             isOpen={isApiKeyModalOpen}
             onClose={() => setIsApiKeyModalOpen(false)}
             currentApiKey={userApiKey}
+            syncSecrets={isSyncOn(user.uid)}
             onSaveApiKey={handleSaveApiKey}
             onClearApiKey={handleClearApiKey}
             getIdToken={() => user.getIdToken()}

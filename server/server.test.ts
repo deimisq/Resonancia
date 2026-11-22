@@ -33,3 +33,13 @@ test("accepts long signed URLs (HF __sign tokens) but rejects absurd ones", asyn
   await assert.doesNotReject(assertSafePublicUrl(long));
   await assert.rejects(assertSafePublicUrl("https://example.com/?" + "a".repeat(5000)));
 });
+
+test("vault: roundtrip, wrong user and tampering fail", async () => {
+  const { encryptVault, decryptVault, isSafeId } = await import("./userData.ts");
+  const raw = encryptVault("secret", "uidA", { geminiKey: "AIza-test" });
+  assert.deepEqual(decryptVault("secret", "uidA", raw), { geminiKey: "AIza-test" });
+  assert.throws(() => decryptVault("secret", "uidB", raw)); // other user
+  assert.throws(() => decryptVault("other", "uidA", raw)); // other secret
+  assert.equal(isSafeId("take-123_ab"), true);
+  for (const bad of ["../x", "a/b", "", "a".repeat(129), "a.b"]) assert.equal(isSafeId(bad), false, bad);
+});
