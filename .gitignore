@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Configuración Firebase local (contiene API key)
+firebase-applet-config.json

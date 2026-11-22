@@ -61,7 +61,7 @@ npm install
 cp .env.example .env
 ```
 
-Configura `.env` (o actualiza `firebase-applet-config.json` con tu propio proyecto Firebase si haces un fork):
+Configura `.env` con las variables `VITE_FIREBASE_*` de tu proyecto Firebase (o copia `firebase-applet-config.example.json` como `firebase-applet-config.json`, que está excluido de Git):
 
 ```env
 PORT=3000
@@ -100,4 +100,4 @@ Antes de hacer `git push`:
 
 1. Verifica que `.env` esté excluido (incluido en `.gitignore` mediante `.env*` y `!.env.example`).
 2. Mantén `ALLOW_SERVER_FALLBACK_KEY=false` en entornos públicos para evitar consumo accidental de una cuota centralizada.
-3. Si cambias de proyecto Firebase, reemplaza `firebase-applet-config.json` o define las variables `VITE_FIREBASE_*` y `FIREBASE_PROJECT_ID`.
+3. No subas `firebase-applet-config.json` (está en `.gitignore`); usa `firebase-applet-config.example.json` como plantilla o define las variables `VITE_FIREBASE_*` y `FIREBASE_PROJECT_ID`.

@@ -21,7 +21,6 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import defaultFirebaseConfig from "../../firebase-applet-config.json";
 import {
   AudioTake,
   EMOTION_PRESETS,
@@ -30,6 +29,15 @@ import {
   TtsEngine,
   VOICE_PROFILES,
 } from "../types/voice";
+
+// Config local opcional (no versionada); si falta, se usan solo las variables VITE_FIREBASE_*.
+const defaultFirebaseConfig: Partial<Record<string, string>> =
+  Object.values(
+    import.meta.glob<Record<string, string>>("../../firebase-applet-config.json", {
+      eager: true,
+      import: "default",
+    })
+  )[0] ?? {};
 
 const firebaseConfig = {
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || defaultFirebaseConfig.projectId,
