@@ -53,8 +53,13 @@ export function isPrivateOrReservedIp(ip: string): boolean {
 
 export async function assertSafePublicUrl(rawUrl: string): Promise<URL> {
   const trimmed = rawUrl.trim();
-  if (!trimmed || trimmed.length > 500) {
-    throw new Error("La URL del endpoint Open-Source no es válida o es demasiado larga.");
+  if (!trimmed) {
+    throw new Error(
+      "Falta la URL del endpoint. Pégala en el campo, o usa la pestaña «Hugging Face Space» si no tienes un endpoint propio."
+    );
+  }
+  if (trimmed.length > 500) {
+    throw new Error("La URL del endpoint Open-Source es demasiado larga (máximo 500 caracteres).");
   }
 
   let parsed: URL;
