@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Cpu,
@@ -68,12 +68,12 @@ import {
 import { WaveformPlayer } from "./components/WaveformPlayer";
 import { VoiceInspector } from "./components/VoiceInspector";
 import { DialogueEditor } from "./components/DialogueEditor";
-import { BatchPhrasesWorkspace } from "./components/BatchPhrasesWorkspace";
-import { LibraryView } from "./components/LibraryView";
-import { ExpressiveGuide } from "./components/ExpressiveGuide";
-import { ApiKeyModal } from "./components/ApiKeyModal";
-import { PersonalVoiceRecorderModal } from "./components/PersonalVoiceRecorderModal";
-import { OpenSourceConfigModal } from "./components/OpenSourceConfigModal";
+const BatchPhrasesWorkspace = lazy(() => import("./components/BatchPhrasesWorkspace").then((m) => ({ default: m.BatchPhrasesWorkspace })));
+const LibraryView = lazy(() => import("./components/LibraryView").then((m) => ({ default: m.LibraryView })));
+const ExpressiveGuide = lazy(() => import("./components/ExpressiveGuide").then((m) => ({ default: m.ExpressiveGuide })));
+const ApiKeyModal = lazy(() => import("./components/ApiKeyModal").then((m) => ({ default: m.ApiKeyModal })));
+const PersonalVoiceRecorderModal = lazy(() => import("./components/PersonalVoiceRecorderModal").then((m) => ({ default: m.PersonalVoiceRecorderModal })));
+const OpenSourceConfigModal = lazy(() => import("./components/OpenSourceConfigModal").then((m) => ({ default: m.OpenSourceConfigModal })));
 
 const SINGLE_CUES = [
   { token: "<breath>", label: "Respiro" },
@@ -2102,7 +2102,7 @@ export default function App() {
                   </div>
                 </section>
               ) : activeTab === "phrases" ? (
-                <BatchPhrasesWorkspace
+                <Suspense fallback={null}><BatchPhrasesWorkspace
                   rawText={rawBatchText}
                   onChangeRawText={setRawBatchText}
                   phrases={phrases}
@@ -2117,7 +2117,7 @@ export default function App() {
                   onGenerateBatch={handleGenerateBatch}
                   onStopBatch={handleStopBatch}
                   onRegenerateSingle={handleRegenerateSinglePhrase}
-                />
+                /></Suspense>
               ) : (
                 <DialogueEditor
                   speakers={dialogueSpeakers}
@@ -2211,6 +2211,7 @@ export default function App() {
         )}
 
         {user && activeTab === "library" && (
+          <Suspense fallback={null}>
           <LibraryView
             takes={libraryTakes}
             onToggleFavorite={handleToggleFavorite}
@@ -2218,15 +2219,20 @@ export default function App() {
             onLoadInStudio={handleLoadInStudio}
             onGoToStudio={() => setActiveTab("studio")}
           />
+          </Suspense>
         )}
 
-        {activeTab === "guide" && <ExpressiveGuide onApplySample={handleApplySample} />}
+        {activeTab === "guide" && (
+          <Suspense fallback={null}>
+            <ExpressiveGuide onApplySample={handleApplySample} />
+          </Suspense>
+        )}
           </>
         )}
       </main>
 
       {user && (
-        <>
+        <Suspense fallback={null}>
           <ApiKeyModal
             key={`${user.uid}-${isApiKeyModalOpen}`}
             isOpen={isApiKeyModalOpen}
@@ -2259,7 +2265,7 @@ export default function App() {
             onCreatedVoice={handleCreatedCustomVoice}
             authorizedFetch={authorizedFetch}
           />
-        </>
+        </Suspense>
       )}
     </div>
   );

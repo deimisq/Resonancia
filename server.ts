@@ -1,6 +1,4 @@
 import "dotenv/config";
-import dns from "dns/promises";
-import net from "net";
 import express, { NextFunction, Request, Response } from "express";
 import fs from "fs";
 import path from "path";
@@ -9,6 +7,13 @@ import { App as FirebaseAdminApp, getApp, getApps, initializeApp } from "firebas
 import { getAuth } from "firebase-admin/auth";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import { Client, handle_file } from "@gradio/client";
+import { assertSafePublicUrl, installOutboundGuard, safeFetchPublic } from "./server/netSafety.ts";
+import {
+  calculateWavDurationSeconds,
+  concatenateWavBuffers,
+  ensureWav,
+  isValidWavBase64,
+} from "./server/wav.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -61,37 +66,42 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 45;
 const userRequestTimestamps = new Map<string, number[]>();
 
+// Returns false (without recording) if `cost` more requests would exceed the window.
+function consumeRateLimit(uid: string, cost = 1): boolean {
+  const now = Date.now();
+  const recent = (userRequestTimestamps.get(uid) || []).filter(
+    (ts) => ts > now - RATE_LIMIT_WINDOW_MS
+  );
+  if (recent.length + cost > RATE_LIMIT_MAX_REQUESTS) {
+    userRequestTimestamps.set(uid, recent);
+    return false;
+  }
+  for (let i = 0; i < cost; i++) recent.push(now);
+  userRequestTimestamps.set(uid, recent);
+  return true;
+}
+
+// Drop idle users so the map cannot grow without bound.
+setInterval(() => {
+  const windowStart = Date.now() - RATE_LIMIT_WINDOW_MS;
+  for (const [uid, ts] of userRequestTimestamps) {
+    if (ts.length === 0 || ts[ts.length - 1] <= windowStart) userRequestTimestamps.delete(uid);
+  }
+}, RATE_LIMIT_WINDOW_MS).unref();
+
 function userRateLimiter(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
   const uid = req.authUser?.uid;
   if (!uid) {
     res.status(401).json({ error: "Autenticación requerida." });
     return;
   }
-
-  const now = Date.now();
-  const windowStart = now - RATE_LIMIT_WINDOW_MS;
-  const recent = (userRequestTimestamps.get(uid) || []).filter((ts) => ts > windowStart);
-
-  if (recent.length >= RATE_LIMIT_MAX_REQUESTS) {
+  if (!consumeRateLimit(uid)) {
     res.status(429).json({
       error: "Has enviado demasiadas solicitudes en un minuto. Espera unos segundos.",
       retryAfterSeconds: 15,
     });
     return;
   }
-
-  recent.push(now);
-  userRequestTimestamps.set(uid, recent);
-
-  // Bound memory if map grows large
-  if (userRequestTimestamps.size > 5000) {
-    for (const [key, timestamps] of userRequestTimestamps.entries()) {
-      if (timestamps.length === 0 || timestamps[timestamps.length - 1] <= windowStart) {
-        userRequestTimestamps.delete(key);
-      }
-    }
-  }
-
   next();
 }
 
@@ -314,226 +324,6 @@ function buildVoiceConfig(voiceName: unknown): {
     return { voice: raw };
   }
   return { prebuiltVoiceConfig: { voiceName: "Kore" } };
-}
-
-function isValidWavBase64(base64: string, minBytes: number, maxBytes: number): boolean {
-  if (typeof base64 !== "string" || base64.length === 0) return false;
-  if (!/^[A-Za-z0-9+/=\r\n]+$/.test(base64)) return false;
-  try {
-    const buf = Buffer.from(base64, "base64");
-    if (buf.length < minBytes || buf.length > maxBytes) return false;
-    const riff = buf.subarray(0, 4).toString("ascii");
-    const wave = buf.subarray(8, 12).toString("ascii");
-    return riff === "RIFF" && wave === "WAVE";
-  } catch {
-    return false;
-  }
-}
-
-function calculateWavDurationSeconds(base64Audio: string): number {
-  const buffer = Buffer.from(base64Audio, "base64");
-  if (buffer.length <= 44) return 0;
-  const byteRate = buffer.readUInt32LE(28) || 48000;
-  const dataSize = Math.max(0, buffer.length - 44);
-  return Number((dataSize / byteRate).toFixed(2));
-}
-
-function extractWavPcm(buf: Buffer): {
-  pcm: Buffer;
-  sampleRate: number;
-  numChannels: number;
-  bitsPerSample: number;
-} {
-  const sampleRate = buf.length >= 28 ? buf.readUInt32LE(24) || 24000 : 24000;
-  const numChannels = buf.length >= 24 ? buf.readUInt16LE(22) || 1 : 1;
-  const bitsPerSample = buf.length >= 36 ? buf.readUInt16LE(34) || 16 : 16;
-
-  let offset = 12;
-  while (offset + 8 <= buf.length) {
-    const chunkId = buf.toString("ascii", offset, offset + 4);
-    const chunkSize = buf.readUInt32LE(offset + 4);
-    if (chunkId === "data") {
-      const start = offset + 8;
-      const end = Math.min(buf.length, start + chunkSize);
-      return { pcm: buf.subarray(start, end), sampleRate, numChannels, bitsPerSample };
-    }
-    offset += 8 + chunkSize + (chunkSize % 2);
-  }
-
-  return {
-    pcm: buf.length > 44 ? buf.subarray(44) : buf,
-    sampleRate,
-    numChannels,
-    bitsPerSample,
-  };
-}
-
-function concatenateWavBuffers(wavBuffers: Buffer[], pauseMs = 160): Buffer {
-  if (wavBuffers.length === 0) return Buffer.alloc(0);
-  if (wavBuffers.length === 1) return wavBuffers[0];
-
-  const first = extractWavPcm(wavBuffers[0]);
-  const { sampleRate, numChannels, bitsPerSample } = first;
-  const blockAlign = (numChannels * bitsPerSample) / 8;
-  const byteRate = sampleRate * blockAlign;
-  const silenceBytes = Math.max(0, Math.round((sampleRate * pauseMs) / 1000)) * blockAlign;
-  const silenceBuf = silenceBytes > 0 ? Buffer.alloc(silenceBytes) : null;
-
-  const chunks: Buffer[] = [];
-  wavBuffers.forEach((wav, index) => {
-    const { pcm } = extractWavPcm(wav);
-    if (index > 0 && silenceBuf) {
-      chunks.push(silenceBuf);
-    }
-    chunks.push(pcm);
-  });
-
-  const pcmData = Buffer.concat(chunks);
-  const header = Buffer.alloc(44);
-  header.write("RIFF", 0, "ascii");
-  header.writeUInt32LE(36 + pcmData.length, 4);
-  header.write("WAVE", 8, "ascii");
-  header.write("fmt ", 12, "ascii");
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(numChannels, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(bitsPerSample, 34);
-  header.write("data", 36, "ascii");
-  header.writeUInt32LE(pcmData.length, 40);
-
-  return Buffer.concat([header, pcmData]);
-}
-
-function isPrivateOrReservedIpv4(ip: string): boolean {
-  const parts = ip.split(".").map((n) => Number(n));
-  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
-    return true;
-  }
-  const [a, b] = parts;
-  if (a === 0 || a === 10 || a === 127) return true;
-  if (a === 169 && b === 254) return true; // link-local / cloud metadata
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-  if (a === 192 && b === 0 && parts[2] === 0) return true;
-  if (a >= 224) return true; // multicast / reserved
-  return false;
-}
-
-function isPrivateOrReservedIp(ip: string): boolean {
-  const clean = ip.trim().toLowerCase();
-  const ver = net.isIP(clean);
-  if (ver === 4) {
-    return isPrivateOrReservedIpv4(clean);
-  }
-  if (ver === 6) {
-    if (clean === "::" || clean === "::1") return true;
-    if (clean.startsWith("fc") || clean.startsWith("fd")) return true; // ULA
-    if (clean.startsWith("fe8") || clean.startsWith("fe9") || clean.startsWith("fea") || clean.startsWith("feb")) {
-      return true; // link-local
-    }
-    if (clean.startsWith("::ffff:")) {
-      const mapped = clean.slice(7);
-      if (net.isIP(mapped) === 4) {
-        return isPrivateOrReservedIpv4(mapped);
-      }
-    }
-    return false;
-  }
-  return true;
-}
-
-async function assertSafePublicUrl(rawUrl: string): Promise<URL> {
-  const trimmed = rawUrl.trim();
-  if (!trimmed || trimmed.length > 500) {
-    throw new Error("La URL del endpoint Open-Source no es válida o es demasiado larga.");
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    throw new Error("Formato de URL inválido. Debe comenzar por https://");
-  }
-
-  if (parsed.protocol !== "https:") {
-    throw new Error("Por seguridad, solo se permiten endpoints externos con HTTPS (https://...).");
-  }
-
-  if (parsed.username || parsed.password) {
-    throw new Error("La URL del endpoint no debe incluir credenciales incrustadas.");
-  }
-
-  const host = parsed.hostname.toLowerCase();
-  if (
-    !host ||
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".local") ||
-    host.endsWith(".internal") ||
-    host === "metadata.google.internal"
-  ) {
-    throw new Error("No se permiten direcciones locales ni internas como endpoint.");
-  }
-
-  if (net.isIP(host) !== 0) {
-    if (isPrivateOrReservedIp(host)) {
-      throw new Error("No se permiten direcciones IP privadas o locales.");
-    }
-    return parsed;
-  }
-
-  let records: Array<{ address: string }>;
-  try {
-    records = await dns.lookup(host, { all: true });
-  } catch {
-    throw new Error("No se pudo resolver el dominio del endpoint indicado. Verifica que la URL siga activa.");
-  }
-
-  if (!records || records.length === 0 || records.some((r) => isPrivateOrReservedIp(r.address))) {
-    throw new Error("El dominio del endpoint resuelve a una dirección no permitida.");
-  }
-
-  return parsed;
-}
-
-async function safeFetchPublic(
-  rawUrl: string,
-  init: RequestInit & { signal?: AbortSignal } = {},
-  maxRedirects = 2
-): Promise<globalThis.Response> {
-  let currentUrl = await assertSafePublicUrl(rawUrl);
-  const initialOrigin = currentUrl.origin;
-
-  for (let hop = 0; hop <= maxRedirects; hop++) {
-    const nextHeaders = new Headers(init.headers);
-    if (currentUrl.origin !== initialOrigin) {
-      nextHeaders.delete("authorization");
-    }
-
-    const resp = await fetch(currentUrl.toString(), {
-      ...init,
-      headers: nextHeaders,
-      redirect: "manual",
-    });
-
-    if (resp.status >= 300 && resp.status < 400) {
-      const location = resp.headers.get("location");
-      if (!location || hop === maxRedirects) {
-        throw new Error("El endpoint devolvió una redirección no permitida.");
-      }
-      const resolved = new URL(location, currentUrl).toString();
-      currentUrl = await assertSafePublicUrl(resolved);
-      continue;
-    }
-
-    return resp;
-  }
-
-  throw new Error("Demasiadas redirecciones en el endpoint externo.");
 }
 
 function parseHfSpaceId(raw: string): string {
@@ -1101,6 +891,15 @@ async function startServer() {
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    // Report-Only until verified in a browser (Firebase popup login loads apis.google.com).
+    // Once the console shows no violations, rename to "Content-Security-Policy" to enforce it.
+    // Goal: limit what an XSS could exfiltrate (the BYOK key lives in sessionStorage).
+    res.setHeader(
+      "Content-Security-Policy-Report-Only",
+      process.env.NODE_ENV === "production"
+        ? "default-src 'self'; script-src 'self' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' blob: data:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com; frame-src https://*.firebaseapp.com https://accounts.google.com; frame-ancestors 'self'; base-uri 'self'; object-src 'none'"
+        : "frame-ancestors 'self'"
+    );
     res.setHeader("Permissions-Policy", "camera=(), microphone=(self), geolocation=()");
     next();
   });
@@ -1373,10 +1172,6 @@ async function startServer() {
     }
   );
 
-  // Allow up to 6MB on /api/tts/generate so open-source mode can carry a 24kHz WAV reference sample
-  app.use("/api/tts/generate", express.json({ limit: "6mb" }));
-  app.use(express.json({ limit: "2mb" }));
-
   app.get("/api/voices", requireVerifiedAuth, userRateLimiter, async (req, res) => {
     try {
       const apiKey = resolveUserGeminiKey(req);
@@ -1469,6 +1264,8 @@ async function startServer() {
     "/api/tts/generate",
     requireVerifiedAuth,
     userRateLimiter,
+    // 6MB so open-source mode can carry a 24kHz WAV reference sample; parsed only after auth
+    express.json({ limit: "6mb" }),
     async (req: AuthenticatedRequest, res) => {
       try {
         const {
@@ -1750,10 +1547,11 @@ async function startServer() {
               return;
             }
 
+            const wav2 = ensureWav(inlineData.data, inlineData.mimeType);
             res.json({
-              audioBase64: inlineData.data,
-              mimeType: inlineData.mimeType || "audio/wav",
-              durationSeconds: calculateWavDurationSeconds(inlineData.data),
+              audioBase64: wav2.base64,
+              mimeType: wav2.mimeType,
+              durationSeconds: calculateWavDurationSeconds(wav2.base64),
               modelUsed: "gemini-3.8-flash-tts",
             });
             return;
@@ -1797,6 +1595,15 @@ async function startServer() {
           }
           if (currentChunk) {
             chunks.push(currentChunk);
+          }
+
+          // Each extra chunk is another Gemini call: charge it against the rate limit up front.
+          if (!consumeRateLimit(req.authUser!.uid, chunks.length - 1)) {
+            res.status(429).json({
+              error: "Este diálogo requiere demasiadas solicitudes para el límite por minuto. Espera unos segundos o divídelo.",
+              retryAfterSeconds: 15,
+            });
+            return;
           }
 
           const wavBuffers: Buffer[] = [];
@@ -1864,7 +1671,10 @@ async function startServer() {
               );
             }
 
-            const data = chunkResp.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+            const chunkInline = chunkResp.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+            const data = chunkInline?.data
+              ? ensureWav(chunkInline.data, chunkInline.mimeType).base64
+              : undefined;
             if (!data) {
               throw new Error("No se pudo generar uno de los fragmentos del diálogo.");
             }
@@ -1946,10 +1756,11 @@ async function startServer() {
           return;
         }
 
+        const wav1 = ensureWav(inlineData.data, inlineData.mimeType);
         res.json({
-          audioBase64: inlineData.data,
-          mimeType: inlineData.mimeType || "audio/wav",
-          durationSeconds: calculateWavDurationSeconds(inlineData.data),
+          audioBase64: wav1.base64,
+          mimeType: wav1.mimeType,
+          durationSeconds: calculateWavDurationSeconds(wav1.base64),
           modelUsed: selectedModel,
         });
       } catch (error) {
@@ -1966,6 +1777,7 @@ async function startServer() {
     "/api/tts/enhance",
     requireVerifiedAuth,
     userRateLimiter,
+    express.json({ limit: "256kb" }),
     async (req: AuthenticatedRequest, res) => {
       try {
         const { text, emotionLabel, emotionIntent } = req.body as {
@@ -2052,6 +1864,7 @@ async function startServer() {
     "/api/tts/split-phrases",
     requireVerifiedAuth,
     userRateLimiter,
+    express.json({ limit: "256kb" }),
     async (req: AuthenticatedRequest, res) => {
       try {
         const { text } = req.body as { text?: string };
@@ -2162,4 +1975,5 @@ async function startServer() {
   });
 }
 
+installOutboundGuard();
 startServer();
