@@ -58,8 +58,9 @@ export async function assertSafePublicUrl(rawUrl: string): Promise<URL> {
       "Falta la URL del endpoint. Pégala en el campo, o usa la pestaña «Hugging Face Space» si no tienes un endpoint propio."
     );
   }
-  if (trimmed.length > 500) {
-    throw new Error("La URL del endpoint Open-Source es demasiado larga (máximo 500 caracteres).");
+  // Signed Hugging Face file URLs (?__sign=<JWT>) routinely exceed 500 chars.
+  if (trimmed.length > 4096) {
+    throw new Error("La URL del endpoint Open-Source es demasiado larga (máximo 4096 caracteres).");
   }
 
   let parsed: URL;

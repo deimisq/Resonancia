@@ -27,3 +27,9 @@ test("wav helpers: wrap PCM, concatenate, measure, validate", () => {
   assert.equal(isValidWavBase64(wav.base64, 100, 1e6), true);
   assert.equal(isValidWavBase64(pcm.toString("base64"), 100, 1e6), false);
 });
+
+test("accepts long signed URLs (HF __sign tokens) but rejects absurd ones", async () => {
+  const long = "https://example.com/file.wav?__sign=" + "a".repeat(900);
+  await assert.doesNotReject(assertSafePublicUrl(long));
+  await assert.rejects(assertSafePublicUrl("https://example.com/?" + "a".repeat(5000)));
+});
