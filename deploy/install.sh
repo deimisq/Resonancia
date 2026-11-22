@@ -54,6 +54,5 @@ install -m 644 deploy/resonancia.service /etc/systemd/system/resonancia.service
 systemctl daemon-reload
 systemctl enable resonancia >/dev/null
 systemctl restart resonancia
-sleep 3
+for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:3000/api/health && echo " <- OK" && break; sleep 1; done
 systemctl --no-pager --lines=5 status resonancia || true
-curl -fsS http://127.0.0.1:3000/api/health && echo " <- OK"
