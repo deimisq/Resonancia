@@ -1400,6 +1400,8 @@ async function startServer() {
 
   app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith("/api/")) {
+      const e = err as { type?: string; message?: string };
+      console.error(`[Resonancia middleware error] ${req.method} ${req.path} type=${e?.type} msg=${String(e?.message).slice(0, 200)}`);
       const status =
         typeof (err as { status?: number })?.status === "number"
           ? (err as { status: number }).status
