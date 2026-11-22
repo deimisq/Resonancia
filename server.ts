@@ -34,6 +34,8 @@ const TTS_LITE_MODEL = process.env.GEMINI_TTS_LITE_MODEL || "gemini-3.8-flash-li
 const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-4-hydrogen";
 
 const PORT = Number(process.env.PORT) || 3000;
+// Behind a reverse proxy / tunnel set HOST=127.0.0.1 so only it can reach the app.
+const HOST = process.env.HOST || "0.0.0.0";
 const ALLOW_SERVER_FALLBACK_KEY = process.env.ALLOW_SERVER_FALLBACK_KEY === "true";
 
 interface AuthenticatedRequest extends Request {
@@ -1425,8 +1427,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Resonancia server listening on http://0.0.0.0:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`Resonancia server listening on http://${HOST}:${PORT}`);
   });
 }
 
