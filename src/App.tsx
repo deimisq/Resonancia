@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { Logo } from "./components/Logo";
+import { deriveTitle } from "./lib/title";
 import {
   deleteTakeAudio,
   downloadTakeAudio,
@@ -179,7 +180,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("studio");
 
   // Single-speaker studio state
-  const [takeTitle, setTakeTitle] = useState<string>(SAMPLE_SCRIPTS[0].title);
+  const [takeTitle, setTakeTitle] = useState<string>("");
   const [scriptText, setScriptText] = useState<string>(SAMPLE_SCRIPTS[0].text);
   const [previousScriptBackup, setPreviousScriptBackup] = useState<string | null>(null);
   const [selectedVoice, setSelectedVoice] = useState<VoiceSelection>(SAMPLE_SCRIPTS[0].voice);
@@ -1287,16 +1288,7 @@ export default function App() {
               style: composedStyle,
             };
 
-        const autoTitle =
-          takeTitle.trim() ||
-          scriptText
-            .replace(/<[^>]+>/g, "")
-            .trim()
-            .split(/\s+/)
-            .slice(0, 6)
-            .join(" ");
-
-        titleForTake = autoTitle || "Locución expresiva";
+        titleForTake = takeTitle.trim() || deriveTitle(scriptText) || "Locución expresiva";
         voiceSummary = resolveVoiceLabel(selectedVoice).slice(0, 120);
         emotionLabel = usingOpenSource ? "Open-Source Zero-Shot" : currentEmotion.label;
         styleUsed = composedStyle;
@@ -1354,6 +1346,7 @@ export default function App() {
       uploadTakeAudio(user, newTake).catch(console.error); // cross-device copy; local copy already saved
       setCurrentTake(newTake);
       setLibraryTakes((prev) => [newTake, ...prev]);
+      setTakeTitle(""); // next take derives its own title from its text
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Ocurrió un error al generar el audio."
@@ -2120,7 +2113,7 @@ export default function App() {
                       type="text"
                       value={takeTitle}
                       onChange={(e) => setTakeTitle(e.target.value)}
-                      placeholder="Título de la locución..."
+                      placeholder="Título (por defecto, la primera frase del texto)"
                       aria-label="Título de la locución"
                       className="text-sm font-semibold text-slate-900 bg-transparent focus:outline-none min-w-[200px] flex-1"
                     />
